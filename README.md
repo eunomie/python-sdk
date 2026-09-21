@@ -105,11 +105,10 @@ A Dang entrypoint already in the manifest is kept as written, so a module can
 pin a version of the shared entrypoint or point at a fork. A static entrypoint
 is told from the shared one by its source, a path inside the module.
 
-The entrypoint finds the module it serves through the workspace it is handed,
-whose working directory is that module's directory. It reads the module's name
-from that directory's manifest, builds the module's container with the same
-build the runtime uses, and asks the module to describe itself
-(`python -m dagger.mod describe`) or to run one call
+Inside an entrypoint `currentModule` is the module it serves, so the
+entrypoint builds that module's container from `currentModule.source`, with
+the same build the runtime uses, however the module was loaded. It asks the
+module to describe itself (`python -m dagger.mod describe`) or to run one call
 (`python -m dagger.mod call`). The types it returns are rebuilt from that
 description in the engine's own session.
 
