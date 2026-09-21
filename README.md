@@ -160,7 +160,7 @@ change them; a call after an edit is refused with a message to run
 only file contents count, not permissions.
 
 What the static path cannot do yet, and refuses at `dagger generate`:
-module clients (an entrypoint manifest has no dependencies), any `cache=` value
+any `cache=` value
 on a function (the entrypoint's exec is content-cached and receives no
 per-call signal), the `legacy` template, and a manifest with `include`,
 `disableDefaultFunctionCaching`, a runtime other than `python`, a `source`
