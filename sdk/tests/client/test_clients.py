@@ -564,8 +564,58 @@ async def test_session_close_forgets_what_was_loaded():
     assert len(s.session.loads) == 2
 
 
+async def test_connection_yields_the_default_session(monkeypatch):
+    from dagger.provisioning import _connection
+
+    class Engine:
+        def get_shared_client_connection(self):
+            return default_session().connection
+
+        async def setup_client(self, conn):
+            return conn
+
+    class provision_engine:  # noqa: N801
+        def __init__(self, cfg):
+            pass
+
+        async def __aenter__(self):
+            return Engine()
+
+        async def __aexit__(self, *_):
+            pass
+
+    monkeypatch.setattr(_connection, "provision_engine", provision_engine)
+
+    async with dagger.connection() as s:
+        assert s is default_session()
+
+
 def test_session_with_no_connection_is_over_the_shared_one():
     from dagger.client._session import SharedConnection
 
     assert Session().connection is SharedConnection()
     assert as_session(SharedConnection()) is default_session()
+
+
+async def test_legacy_connection_yields_an_isolated_session(monkeypatch):
+    from dagger.provisioning import _connection
+
+    class Engine:
+        def __init__(self, cfg, stack):
+            pass
+
+        async def provision(self):
+            return self
+
+        def get_client_connection(self):
+            return FakeConnection()
+
+        async def setup_client(self, conn):
+            return conn
+
+    monkeypatch.setattr(_connection, "Engine", Engine)
+
+    async with dagger.Connection() as s:
+        assert isinstance(s, Session)
+        assert s is not default_session()
+        assert isinstance(s.connection, FakeConnection)
