@@ -30,7 +30,8 @@ type Entrypoint implements ModuleEntrypoint {
   Call one constructor or function of the module.
 
   The request and the result are the module's own JSON, so the entrypoint
-  passes them through without reading them.
+  passes them through without reading them. The request also carries the
+  module's declared local clients, never the workspace (see handover.dang).
   """
   pub call(
     workspace: Workspace!,
@@ -44,6 +45,9 @@ type Entrypoint implements ModuleEntrypoint {
       receiverValue: receiverValue,
       fnName: fnName,
       fnArgs: fnArgs,
+      clients: ClientHandover(workspace: workspace).clients.map { client =>
+        {{name: client.name, source: client.source}}
+      },
     }})
     let result = build.installed
       .withExec(

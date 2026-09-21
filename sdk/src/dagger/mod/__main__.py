@@ -95,8 +95,19 @@ def _call(args: argparse.Namespace) -> None:
 
 
 async def _dispatch(request: dict[str, Any]) -> Any:
+    from dagger.client._load import parse_handed_clients, use_entrypoint_clients
+    from dagger.mod._exceptions import InvalidInputError
     from dagger.mod.cli import load_module
 
+    # The module's declared local clients, which the entrypoint resolved and
+    # this process cannot. Before the user's code is imported, so nothing it
+    # starts can load without them.
+    try:
+        clients = parse_handed_clients(request.get("clients"))
+    except (TypeError, KeyError, ValueError) as e:
+        msg = f"Failed to read the clients the entrypoint handed over: {e}"
+        raise InvalidInputError(msg) from e
+    use_entrypoint_clients(clients)
     return await load_module().dispatch(request)
 
 
