@@ -102,11 +102,10 @@ type PythonSdk {
   let vendorDirName: String! = "sdk"
 
   """
-  The shared Dang entrypoint every module on the runtime path names, served
-  from this repository's entrypoint/ directory. An engine that loads manifest
-  version 2 drives the module through it; an older engine ignores the table
-  and uses the builtin runtime named by [runtime]. `@v1` selects the greatest
-  `entrypoint/v1.*` tag of this repository, then the greatest plain `v1.*` one.
+  The shared Dang entrypoint every module names unless it has a static one,
+  served from this repository's entrypoint/ directory. `@v1` selects the
+  greatest `entrypoint/v1.*` tag of this repository, then the greatest plain
+  `v1.*` one.
   """
   let sharedEntrypointSource: String! = "dagger.io/sdk/python/entrypoint@v1"
 
@@ -133,8 +132,8 @@ type PythonSdk {
   without a module gets the same tree and no module config. In a module scope,
   a module without a config file is initialized from the configured template,
   every module receives a dagger-module.toml from the manifest builder, and a
-  pre-1.0 dagger.json is migrated and removed. With dangEntrypoint, the module
-  gets an entrypoint manifest and a generated entrypoint instead of a runtime.
+  pre-1.0 dagger.json is migrated and removed. The manifest names the shared
+  entrypoint, or with dangEntrypoint one generated into the module.
   """
   pub generateScope(ws: Workspace!, isModule: Boolean!, name: String!, clients: [ModuleSource!]!): Workspace! {
     let scope = normalizePath(ws.cwd)
@@ -152,8 +151,8 @@ type PythonSdk {
       if (dangEntrypoint) {
         checkStaticScope(initialized, scope, hadConfig)
       }
-      # The runtime manifest is what every engine serves a schema for; the
-      # static path swaps it for the entrypoint manifest as it generates.
+      # The shared entrypoint's manifest; the static path swaps it for its own
+      # as it generates.
       let configured = generateScopeManifest(initialized, scope, name)
       Mod(
         rootPath: scope,
@@ -171,34 +170,122 @@ type PythonSdk {
   that uses it, so the manifest lists none, and the [[dependencies]] of the
   layout before go. Remove dagger.json so two manifest files cannot contain
   different state.
+
+  The module runs on a Dang entrypoint and on nothing else. The runtime this
+  SDK used to write, `[runtime] source = "python"`, goes, and so does what
+  only a runtime reads: engineVersion, since an entrypoint runs a module on
+  the engine's own version. Any other runtime is one the user chose, and the
+  manifest keeps it with no entrypoint added, because the engine follows an
+  entrypoint over a runtime; for the same reason a manifest with both is
+  refused.
   """
   let generateScopeManifest(ws: Workspace!, scope: String!, name: String!): Workspace! {
     let root = "/" + scope
     let hasToml = scopeHasFile(ws, scope, "dagger-module.toml")
     let hasJson = scopeHasFile(ws, scope, "dagger.json")
+    if (hasToml) {
+      checkOneRunner(ws.file(root + "/dagger-module.toml").contents)
+    }
     let base = if (hasToml and isEntrypointManifest(ws.file(root + "/dagger-module.toml").contents)) {
-      # A static entrypoint manifest holds nothing the runtime manifest keeps.
-      sdkHelpers.moduleManifest.withLegacyPythonRuntime
-        .withDangEntrypoint(source: sharedEntrypointSource)
+      # This SDK's static entrypoint manifest holds nothing the shared one keeps.
+      sdkHelpers.moduleManifest.withDangEntrypoint(source: sharedEntrypointSource)
     } else if (hasToml) {
       let manifest = ws.file(root + "/dagger-module.toml")
+      let config = tomlConfig(manifest.contents)
       let loaded = sdkHelpers.moduleManifest(loadToml: withoutStaleEntrypoint(manifest))
-      # A Dang entrypoint already there is the user's: a pinned version, or a fork.
-      if (ManifestToml(manifest.contents).entrypointKind == "dang") {
+      if (keepsItsRuntime(config)) {
         loaded
       } else {
-        loaded.withDangEntrypoint(source: sharedEntrypointSource)
+        checkEntrypointOnly(config, "dagger-module.toml")
+        # A Dang entrypoint already there is kept: the shared one, or one the
+        # user chose, a pinned version, a fork or one of their own.
+        let entrypointed = if (ManifestToml(manifest.contents).entrypointKind == "dang") {
+          loaded
+        } else {
+          loaded.withDangEntrypoint(source: sharedEntrypointSource)
+        }
+        entrypointed.withoutLegacyFields
       }
     } else if (hasJson) {
-      sdkHelpers.moduleManifest(loadJson: ws.file(root + "/dagger.json"))
-        .withDangEntrypoint(source: sharedEntrypointSource)
+      let manifest = ws.file(root + "/dagger.json")
+      let config = json.withContents((manifest.contents :: Dagger.JSON!))
+      let loaded = sdkHelpers.moduleManifest(loadJson: manifest)
+      if (keepsItsRuntime(config)) {
+        loaded
+      } else {
+        checkEntrypointOnly(config, "dagger.json")
+        loaded.withDangEntrypoint(source: sharedEntrypointSource).withoutLegacyFields
+      }
     } else {
-      sdkHelpers.moduleManifest.withLegacyPythonRuntime
-        .withDangEntrypoint(source: sharedEntrypointSource)
+      sdkHelpers.moduleManifest.withDangEntrypoint(source: sharedEntrypointSource)
     }
     base.withName(name: name).withoutLegacyRuntimeDependencies
       .generate(ws.withWorkdir(scope), lock: lock, legacyJson: false)
       .withWorkdir(".")
+  }
+
+  """
+  Whether a manifest names a runtime of the user's own: anything but the
+  builtin `python` this SDK wrote. Read with a TOML or JSON parser, because
+  the manifest is the user's content; a dagger.json names it as `sdk`.
+  """
+  let keepsItsRuntime(config: JSONValue!): Boolean! {
+    let fields = config.fields
+    let key = if (fields.contains("runtime")) { "runtime" } else if (fields.contains("sdk")) { "sdk" } else { "" }
+    if (key == "") {
+      false
+    } else {
+      let value = config.field([key])
+      let source = value.asString rescue {
+        err: Error => value.field(["source"]).asString
+      }
+      source != "" and source != "python"
+    }
+  }
+
+  """
+  Refuse a manifest that names both a runtime of the user's own and an
+  entrypoint. The engine runs the entrypoint and never calls the runtime,
+  while generation would take the core it generates against from the
+  runtime's engineVersion: a core that is not the session's. Both tables are
+  the user's, so the user picks one.
+  """
+  let checkOneRunner(toml: String!): Void {
+    let manifest = ManifestToml(toml)
+    let config = tomlConfig(toml)
+    if (manifest.hasEntrypoint and keepsItsRuntime(config)) {
+      raise "dagger-module.toml names both a runtime (" + runtimeSource(config) + ") and an entrypoint (" +
+        manifest.entrypointSource + "); the engine runs the entrypoint and never calls the runtime. " +
+        "Remove [entrypoint] to run on your runtime, or [runtime] to run on the entrypoint"
+    }
+    null
+  }
+
+  let runtimeSource(config: JSONValue!): String! {
+    let value = config.field(["runtime"])
+    value.asString rescue {
+      err: Error => value.field(["source"]).asString
+    }
+  }
+
+  """
+  Refuse what a runtime manifest can say and an entrypoint manifest cannot,
+  before anything is written: which files are the module (include, exclude)
+  and where its source is. Dropping either would change the module silently.
+  """
+  let checkEntrypointOnly(config: JSONValue!, file: String!): Void {
+    let fields = config.fields
+    let listed = ["include", "exclude"].filter { key => fields.contains(key) }
+    let source = if (fields.contains("source") and normalizePath(config.field(["source"]).asString) != ".") {
+      ["source"]
+    } else {
+      [] :: [String!]!
+    }
+    let refused = listed + source
+    if (refused.length > 0) {
+      raise file + " has settings an entrypoint manifest cannot carry (" + refused.join(", ") + "); remove them, or keep the module on a runtime of your own"
+    }
+    null
   }
 
   """
@@ -235,35 +322,45 @@ type PythonSdk {
   }
 
   """
-  Manifest keys and tables that an entrypoint manifest has no place for.
+  Manifest keys and tables that an entrypoint manifest has no place for, read
+  with a TOML parser.
   """
   let staticObjections(toml: String!): [String!]! {
-    let head = toml.split("\n[").takeFirst(1).join("")
-    let keys = ["include", "disableDefaultFunctionCaching"].filter { key =>
-      head.containsMatch(Regexp("(?m)^\\s*" + key + "\\s*="))
-    }
+    let config = tomlConfig(toml)
+    let fields = config.fields
+    let keys = ["include", "disableDefaultFunctionCaching"].filter { key => fields.contains(key) }
     # An entrypoint manifest roots a module at its own directory, which is what
     # `source = "."` says; any other source is what it cannot carry.
-    let sourceMatch = head.match("(?m)^\\s*source\\s*=\\s*\"([^\"]*)\"")
-    let sourceValue = if (sourceMatch == null) { "." } else { sourceMatch.captures[0] ?? "." }
-    let source = if (sourceValue == ".") { [] :: [String!]! } else { ["source"] }
-    # [[dependencies]] is not among them: generation removes it on every path.
-    let tables = ["codegen", "clients"].filter { name =>
-      toml.containsMatch(Regexp("(?m)^\\s*\\[\\[?" + name + "\\]\\]?"))
+    let source = if (fields.contains("source") and normalizePath(config.field(["source"]).asString) != ".") {
+      ["source"]
+    } else {
+      [] :: [String!]!
     }
-    let pythonRuntime = toml.containsMatch("(?m)^\\s*\\[runtime\\]\\s*\\n\\s*source\\s*=\\s*\"python\"")
-    let runtime = if (toml.containsMatch("(?m)^\\s*\\[runtime\\]") and pythonRuntime == false) { ["runtime"] } else { [] :: [String!]! }
+    # [[dependencies]] is not among them: generation removes it on every path.
+    let tables = ["codegen", "clients"].filter { name => fields.contains(name) }
+    let runtime = if (keepsItsRuntime(config)) { ["runtime"] } else { [] :: [String!]! }
     keys + source + tables + runtime
   }
 
+  let tomlConfig(toml: String!): JSONValue! {
+    json.withContents((JSON.encode(TOML.decode(toml)) :: Dagger.JSON!))
+  }
+
   """
-  Whether the manifest names an entrypoint generated into the module. The
-  shared entrypoint is a Dang entrypoint too, so the kind alone does not tell:
-  a static entrypoint is the one whose source is a path inside the module.
+  Whether the manifest names the static entrypoint this SDK generates into the
+  module: a Dang entrypoint at the path generation writes. Any other
+  entrypoint, a path of the user's own among them, is not this SDK's to
+  replace.
   """
   let isEntrypointManifest(toml: String!): Boolean! {
-    ManifestToml(toml).isStatic
+    let manifest = ManifestToml(toml)
+    manifest.entrypointKind == "dang" and normalizePath(manifest.entrypointSource) == staticEntrypointPath
   }
+
+  """
+  Where the static entrypoint lives in a module, as generation names it.
+  """
+  let staticEntrypointPath: String! = vendorDirName + "/entrypoint"
 
   let hasEntrypointManifest(ws: Workspace!, scope: String!): Boolean! {
     scopeHasFile(ws, scope, "dagger-module.toml") and isEntrypointManifest(ws.file("/" + scopePath(scope, "dagger-module.toml")).contents)
@@ -428,10 +525,9 @@ type PythonSdk {
 """
 A dagger-module.toml, read for its entrypoint table.
 
-Not a TOML parser. A table runs to the next table header, so one pass over the
-lines separates the entrypoint table from the rest. A header is recognised with
-its trailing comment removed, so a "[" inside a comment or a value never ends
-the table; every line is carried over exactly as it was read.
+Values are read with a TOML parser, because the manifest is the user's
+content: quoting, spacing and key order are theirs. The pyproject helper
+removes the table and keeps every other byte as it was.
 """
 type ManifestToml {
   pub toml: String!
@@ -442,7 +538,7 @@ type ManifestToml {
   }
 
   pub hasEntrypoint: Boolean! {
-    split.entrypoint.isEmpty == false
+    config.fields.contains("entrypoint")
   }
 
   """The entrypoint's kind, or empty when the manifest has no entrypoint."""
@@ -454,71 +550,23 @@ type ManifestToml {
     entrypointValue("source")
   }
 
-  """
-  Whether the entrypoint is one generated into the module: a Dang entrypoint
-  whose source is a path inside the module, read the way the engine reads it.
-  """
-  pub isStatic: Boolean! {
-    entrypointKind == "dang" and isLocalSource(entrypointSource)
-  }
-
   """The manifest with its entrypoint table removed."""
   pub withoutEntrypoint: File! {
-    directory.withNewFile(fileName, split.kept.join("\n")).file(fileName)
+    PyprojectHelper().withoutTable(directory.withNewFile(fileName, toml).file(fileName), "entrypoint")
   }
 
   let fileName: String! = "dagger-module.toml"
 
-  let split: TomlSplit! {
-    toml.split("\n").reduce(TomlSplit()) { state, line =>
-      let header = line.replaceMatches("#.*", "").trimSpace
-      if (header.hasPrefix("[")) {
-        let isEntrypoint = header == "[entrypoint]"
-        TomlSplit(
-          kept: if (isEntrypoint) { state.kept } else { state.kept + [line] },
-          entrypoint: if (isEntrypoint) { state.entrypoint + [line] } else { state.entrypoint },
-          inTable: isEntrypoint,
-        )
-      } else if (state.inTable) {
-        TomlSplit(kept: state.kept, entrypoint: state.entrypoint + [line], inTable: true)
-      } else {
-        TomlSplit(kept: state.kept + [line], entrypoint: state.entrypoint, inTable: false)
-      }
-    }
+  let config: JSONValue! {
+    json.withContents((JSON.encode(TOML.decode(toml)) :: Dagger.JSON!))
   }
 
   let entrypointValue(key: String!): String! {
-    let m = split.entrypoint.join("\n").match(Regexp("(?m)^\\s*" + Regexp.escape(key) + "\\s*=\\s*\"([^\"]*)\""))
-    if (m == null) { "" } else { m.captures[0] ?? "" }
-  }
-
-  """
-  The engine's own rule: a path prefix or a dot-free first segment is local, a
-  URL or a host name is not.
-  """
-  let isLocalSource(source: String!): Boolean! {
-    if (source.hasPrefix(".") or source.hasPrefix("/")) {
-      true
-    } else if (source.contains(":")) {
-      false
+    if (hasEntrypoint == false) {
+      ""
     } else {
-      (source.split("/")[0] ?? "").contains(".") == false
+      let table = config.field(["entrypoint"])
+      if (table.fields.contains(key)) { table.field([key]).asString } else { "" }
     }
-  }
-}
-
-"""
-Accumulator for splitting a manifest's entrypoint table off the rest.
-"""
-type TomlSplit {
-  pub kept: [String!]!
-  pub entrypoint: [String!]!
-  pub inTable: Boolean!
-
-  new(kept: [String!]! = [], entrypoint: [String!]! = [], inTable: Boolean! = false) {
-    self.kept = kept
-    self.entrypoint = entrypoint
-    self.inTable = inTable
-    self
   }
 }

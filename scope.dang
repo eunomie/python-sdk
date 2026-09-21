@@ -674,5 +674,13 @@ type PyprojectHelper {
     tool.withFile(path, pyproject).withExec(["pyproject", "get-global-client", path]).stdout == "true"
   }
 
+  """
+  The file with one table cut out and every other byte kept.
+  """
+  pub withoutTable(file: File!, table: String!): File! {
+    let at = "/work/" + file.name
+    tool.withFile(at, file).withExec(["pyproject", "remove-table", at, table]).file(at)
+  }
+
   let path: String! = "/work/pyproject.toml"
 }
