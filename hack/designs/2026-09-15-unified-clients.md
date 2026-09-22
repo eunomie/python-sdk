@@ -56,8 +56,8 @@ Earlier revisions. 6: all questions decided. 5: self client; signature rule.
   first use, with one engine call. No `[[dependencies]]`.
 - A module calls itself through a client to itself. The user declares that
   client; the SDK adds none.
-- An exported signature names core types and the module's own types only. A
-  client type is for calls inside a function body.
+- An exported signature may name core types and any of the module's own types,
+  the classes of its self client included. The SDK does not check it.
 - A temporary global client keeps existing module code working, behind a flag in
   `pyproject.toml`. A new module has no flag.
 - The SDK files import generated core in many places today. Phase 1 removes
@@ -461,17 +461,11 @@ class MyModule:
 
 ### 7.4 What an exported signature can name [decided]
 
-This is an engine rule. A module's exported functions, fields and constructor
-arguments name core types and the module's own types only. So module A cannot
-expose a function that returns a type of module B. A client type is for calls
-inside a function body.
-
-- The SDK refuses a client type in a signature when it registers types. The
-  check is in `describe_type` (`sdk/src/dagger/mod/_describe.py:137`): a class
-  from `dagger_clients.<name>`, other than `dagger_clients.core`, is refused.
-  The message names the function and the type.
-- [provisional] The classes of a self client are refused the same way. A
-  signature uses the module's own classes.
+A module's exported functions, fields and constructor arguments may name core
+types and any of the module's own types. The classes of the module's self
+client are the module's own types, so a signature may name them. The SDK does
+not check the types a signature names: `describe_type`
+(`sdk/src/dagger/mod/_describe.py`) describes a generated class by its name.
 
 ## 8. Session and load
 
@@ -959,7 +953,7 @@ a name, every client regenerates rather than keeping the old name.
 | Q10. Removing a client | `generateScope` deletes the member, its source and its `members` entry, then relocks. |
 | Q11. Version check strictness | Client/core mismatch: import error, and a warning while the SDK registers types. Engine/core mismatch: warning in phase 1. |
 | Q12. The tree inside a scope | `src/`, `sdk/`, `clients/core`, `clients/<name>`. The same inside a module and outside one. No suggested workspace location. |
-| Q13. Client types in a module's own signatures | Not supported. An exported signature names core types and the module's own types only. The SDK refuses a client type with a clear message (7.4). |
+| Q13. Client types in a module's own signatures | An exported signature may name core types and any of the module's own types, the classes of its self client included. The SDK does not check it (7.4). |
 | Q14. A self client for every module | No. The user declares a client to the module when the module calls itself. |
 
 ## 15. Checks
@@ -990,7 +984,7 @@ Invert each assertion once and confirm that it fails.
 22. User content kept: user tables, comments and a user member survive generation byte for byte.
 23. Default session in a plain program: a program with no connection handling runs a client call and exits cleanly. **Passes**: exit 0, no session process left, 23.7s cold and 1.9s warm.
 24. Self client: a module with a client to itself calls its own function through `dagger call`; after an API change, generation succeeds.
-25. Signature rule: a function that returns a client type fails registration with a clear message; a core type and the module's own class pass.
+25. Signatures: a function that returns a core type, the module's own class or a class of its self client registers.
 
 ## 16. Phases
 
@@ -1003,7 +997,7 @@ Invert each assertion once and confirm that it fails.
   program.
 - Remove every import of generated core from the SDK files.
 - SDK files: `Session` and the default session, `Target`, the load memo, the
-  core digest check, error types, the signature rule in `describe_type`.
+  core digest check, error types.
 - Generator: partition by `@sourceMap`; core and one member per client; entry
   functions; descriptors; digests; the global client with the flag.
 - `generateScope` writes the one structure in every scope, manages the members
