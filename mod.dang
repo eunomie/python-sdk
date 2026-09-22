@@ -25,11 +25,6 @@ type Mod {
   let clients: [ModuleSource!]
 
   """
-  Write the commit a Git client was generated against into its descriptor.
-  """
-  let lock: Boolean!
-
-  """
   Module root relative to the client's cwd.
   """
   pub path: String! {
@@ -83,7 +78,6 @@ type Mod {
         path: rootPath,
         ws: ws,
         clients: clients ?? declaredClients,
-        lock: lock,
         isModule: true,
         engineVersion: engineVersion,
       ).generated

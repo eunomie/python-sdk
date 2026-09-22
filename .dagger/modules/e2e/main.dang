@@ -364,27 +364,28 @@ type E2e {
   }
 
   """
-  Git pins follow lock into the client's descriptor, never into the manifest,
-  and JSON is removed in both modes.
+  A Git client's descriptor always carries the commit its ref resolved to,
+  and a newly resolved commit replaces it, as `dagger module client update`
+  does. The client never reaches the manifest, and JSON is removed.
   """
   pub generateScopePinsCheck(ws: Workspace!): Void @check {
     let commit = "64645f1967d3dba6fce951dd61ae4acd8d9b0861"
+    let updatedCommit = "92d07fcb9dd25ae50afd30097f09936d674c2950"
     let target = moduleSource("github.com/dagger/sdk-helpers@main", refPin: commit)
+    let updated = moduleSource("github.com/dagger/sdk-helpers@main", refPin: updatedCommit)
     let descriptor = "clients/sdk-helpers/src/dagger_clients/sdk_helpers/_target.py"
     let input = ws.withWorkdir(tomlGenerateModulePath).withNewFile("keep.txt", "keep")
-    let unlocked = pythonSdk.generateScope(input, isModule: true, name: "toml-generate-app", clients: [target])
-    assertContainsAll(unlocked.file(descriptor).contents, ["REF = \"" + target.asString + "\"", "PIN = None"])
-    assertNotContains(unlocked.file("dagger-module.toml").contents, "sdk-helpers", "a client reached the manifest")
-    let locked = pythonSdk(lock: true).generateScope(unlocked, isModule: true, name: "toml-generate-app", clients: [target])
-    assertContains(locked.file(descriptor).contents, "PIN = \"" + commit + "\"", "selected commit was lost")
-    let unlockedAgain = pythonSdk.generateScope(locked.withNewFile("dagger.json", "stale"), isModule: true, name: "toml-generate-app", clients: [target])
-    assertContains(unlockedAgain.file(descriptor).contents, "PIN = None", "disabling lock retained a pin")
-    assert(!unlockedAgain.directory(".").exists("dagger.json"), "generation retained JSON")
-    assert(unlockedAgain.cwd == input.cwd, "generation changed cwd")
-    assert(unlockedAgain.file("keep.txt").contents == "keep", "generation changed another file")
-    assertNotContains(unlockedAgain.file("dagger-module.toml").contents, "engineVersion", "an entrypoint manifest kept the engine version only a runtime reads")
-    let repeated = pythonSdk.generateScope(unlockedAgain, isModule: true, name: "toml-generate-app", clients: [target])
-    assert(repeated.changes(unlockedAgain).isEmpty, "repeated generation changed the workspace")
+    let pinned = pythonSdk.generateScope(input, isModule: true, name: "toml-generate-app", clients: [target])
+    assertContainsAll(pinned.file(descriptor).contents, ["REF = \"" + target.asString + "\"", "PIN = \"" + commit + "\""])
+    assertNotContains(pinned.file("dagger-module.toml").contents, "sdk-helpers", "a client reached the manifest")
+    let repinned = pythonSdk.generateScope(pinned.withNewFile("dagger.json", "stale"), isModule: true, name: "toml-generate-app", clients: [updated])
+    assertContains(repinned.file(descriptor).contents, "PIN = \"" + updatedCommit + "\"", "a newly resolved commit did not replace the pin")
+    assert(!repinned.directory(".").exists("dagger.json"), "generation retained JSON")
+    assert(repinned.cwd == input.cwd, "generation changed cwd")
+    assert(repinned.file("keep.txt").contents == "keep", "generation changed another file")
+    assertNotContains(repinned.file("dagger-module.toml").contents, "engineVersion", "an entrypoint manifest kept the engine version only a runtime reads")
+    let repeated = pythonSdk.generateScope(repinned, isModule: true, name: "toml-generate-app", clients: [updated])
+    assert(repeated.changes(repinned).isEmpty, "repeated generation changed the workspace")
     null
   }
 

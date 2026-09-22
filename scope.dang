@@ -26,11 +26,6 @@ type Scope {
   let clients: [ModuleSource!]!
 
   """
-  Write the commit a Git client was generated against into its descriptor.
-  """
-  let lock: Boolean!
-
-  """
   Whether the scope is a module's, which the module runtime builds.
   """
   let isModule: Boolean!
@@ -328,7 +323,9 @@ type Scope {
 
   """
   One member per declared client. A local module is loaded by its path from
-  the workspace root; a Git one by its ref, pinned when locked.
+  the workspace root; a Git one by its ref, pinned to the commit the engine
+  resolved it to, so a client never loads a commit it was not generated
+  against.
   """
   let clientMembers: [ClientMember!]! {
     clients.map { client =>
@@ -336,7 +333,7 @@ type Scope {
       ClientMember(
         name: client.moduleName,
         ref: if (isGit) { client.asString } else { localRef(client.sourceRootSubpath) },
-        pin: if (isGit and lock and client.pin != "") { client.pin } else { null },
+        pin: if (isGit and client.pin != "") { client.pin } else { null },
         source: client,
       )
     }

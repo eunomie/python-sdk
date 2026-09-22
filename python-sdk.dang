@@ -7,9 +7,6 @@ type PythonSdk {
   """
   pub template: String! = "default"
 
-  """Write selected Git commits as manifest pins."""
-  pub lock: Boolean! = false
-
   """
   Python version written to a new module's pyproject.toml; empty keeps the template's.
   """
@@ -140,7 +137,7 @@ type PythonSdk {
     # Resolve local client paths from the workspace root.
     let rooted = ws.withWorkdir(".")
     if (isModule == false) {
-      Scope(path: scope, ws: rooted, clients: clients, lock: lock, isModule: false, engineVersion: "").generated.withWorkdir(scope)
+      Scope(path: scope, ws: rooted, clients: clients, isModule: false, engineVersion: "").generated.withWorkdir(scope)
     } else {
       let hadConfig = hasModuleConfig(ws, scope)
       let initialized = if (hadConfig) {
@@ -162,7 +159,6 @@ type PythonSdk {
         ws: configured,
         dangEntrypoint: dangEntrypoint or hasEntrypointManifest(configured, scope),
         clients: clients,
-        lock: lock,
       ).generated.withWorkdir(scope)
     }
   }
@@ -223,7 +219,7 @@ type PythonSdk {
       sdkHelpers.moduleManifest.withDangEntrypoint(source: sharedEntrypointSource)
     }
     base.withName(name: name).withoutLegacyRuntimeDependencies
-      .generate(ws.withWorkdir(scope), lock: lock, legacyJson: false)
+      .generate(ws.withWorkdir(scope), lock: false, legacyJson: false)
       .withWorkdir(".")
   }
 
@@ -526,7 +522,6 @@ type PythonSdk {
       ws: ws,
       dangEntrypoint: dangEntrypoint or hasEntrypointManifest(ws, modPath),
       clients: null,
-      lock: lock,
     )
   }
 
