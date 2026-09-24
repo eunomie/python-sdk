@@ -825,44 +825,27 @@ Query.serveModule(address: String!, refPin: String): Void
 **The descriptor keeps one shape**: `ref` is the address, `pin` is `refPin`.
 Generated code never branches on which kind of reference it holds.
 
-**The SDK, however, sends one of two queries** [confident]. A module driven by a
-Dang entrypoint runs its Python in an ordinary nested client, which the engine
-gives no module context, so that process finds its workspace from its own
-container rather than from the user's. An absolute workspace path then resolves
-against a container and the load fails.
+**The SDK sends `serveModule` for every target** [confident]. A module driven
+by a Dang entrypoint runs its Python in an ordinary nested client, which the
+engine gives no module context. The engine still knows which module that
+process runs for: each client records its parent chain, which the engine sets
+and the process cannot. From a process under a module, `serveModule` resolves
+a local path in the nearest such module's own tree: its git repository at the
+pinned commit, the directory it was built from, or on the host its git
+repository, or its own directory outside one. It refuses a path that leaves
+the tree and a target with no module config, and never reads the caller's
+workspace. A plain program keeps resolving in its own workspace.
 
-The entrypoint therefore hands the process what it needs to load its clients —
-and **only** that:
-
-| The target | The query |
-| --- | --- |
-| Local, and handed over by the entrypoint | `node(id: <that client>)` → `asModule` → `serve` |
-| Everything else | `serveModule(address, refPin)` |
-
-What is handed over is one **module source per declared client**, built from the
-files the engine has already loaded for it, detached from the workspace those
-files came from. It is read from the caller's config at every call. A local
-client that was not handed over fails by name, pointing at `dagger generate`;
-the process never falls back to `serveModule` for a local target.
-
-**It must not be the workspace, and it must not be a handle that leads back to
-one** [confident]. A module is third-party code, and in Dagger an ID is a
-capability. Handing over the workspace lets module code read any file in it; a
-probe did exactly that. Handing over `Workspace.moduleSource(path)` is no
-better, because such a source keeps the workspace it came from —
-`withIncludes(["../../../secret"])` reloads its context from there — and
-`Module.source` leads back the same way. Both were tried, and both leaked.
-
-The branch lives in the load seam, `sdk/src/dagger/client/_load.py`, and nowhere
-else. It is temporary: one query would serve both if the engine accepted a
-least-privilege capability of this kind, which is filed against the engine. A
-`serveModule` that took a *workspace* would not do: it would put the capability
-back in the module's hands.
+Nothing is handed to the module's code, so no capability to the caller's
+files reaches it. An engine without this rule, such as the beta.14 floor,
+resolves a module's local client in the caller's workspace, and can serve the
+wrong module.
 
 **How far the evidence reaches** [confident]. A check runs module code that
-walks every identifier the loader holds and every route that could rebuild a
-directory from outside the files it was handed, at climb depths 1 to 12, one
-level of recursion, under both entrypoint forms: 4305 routes, nothing read. It
+walks every identifier it holds, whatever the loader keeps and its own current
+workspace, and every route that could rebuild a directory from outside the
+module's files, at climb depths 1 to 12, one level of recursion, under both
+entrypoint forms, and reads nothing. It
 distinguishes a refused capability from a field the engine does not have, and
 asserts the second count is zero, so a route cannot pass by naming a field that
 does not exist. What it does not cover: a field a later engine adds, a third
@@ -1082,5 +1065,5 @@ Verified while building it, against a live engine:
 - A module driven by a Dang entrypoint runs its Python as an ordinary nested
   client. The engine attaches module context only to execs it starts itself, so
   that process reports `currentWorkspace` from its own container and no
-  `currentModule` at all. Whatever module context the code needs, the entrypoint
-  must hand over.
+  `currentModule` at all. `serveModule` finds the module through the
+  process's parent chain instead.
