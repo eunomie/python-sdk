@@ -1,18 +1,18 @@
-"""What module code can read of its caller's files: nothing it was not handed.
+"""What module code can read of its caller's files: nothing.
 
-Copied into a module that runs on an entrypoint. `reach` takes every ID the
-SDK's loader holds, however it holds it, and drives each down every route on a
-`ModuleSource` (and a `Module`, and a `Workspace`) that could rebuild a
-directory from somewhere other than the source's own loaded files: the caller's
-host, its `currentWorkspace`, or a workspace the source secretly retained. That
-last shape is the one that defeated an earlier fix, where a
+Copied into a module that runs on an entrypoint. `reach` takes every ID module
+code holds without asking its caller, whatever the SDK's loader keeps and its
+own current workspace, and drives each down every route on a `ModuleSource`
+(and a `Module`, and a `Workspace`) that could rebuild a directory from
+somewhere other than the source's own loaded files: the caller's host, its
+`currentWorkspace`, or a workspace the source secretly retained. That last
+shape is the one that defeated an earlier fix, where a
 `Workspace.moduleSource` result reloaded its context from the workspace on
-`withIncludes`. The handed-over source is a DIR-kind source with no workspace,
-so the same routes should read nothing; this proves it against the engine
-rather than by reading the engine's code.
+`withIncludes`. This proves it against the engine rather than by reading the
+engine's code.
 
 Each route reads a file that exists only at the caller's workspace root and is
-never handed to the module. A route that returns it is a finding. A route that
+never in the module's files. A route that returns it is a finding. A route that
 fails is only reassuring if it failed because the capability was refused, not
 because the field does not exist on this engine: the two are told apart, and
 the summary reports the split so a run that proved nothing cannot read as a
@@ -62,6 +62,15 @@ def _held_ids() -> list[str]:
     return found
 
 
+async def _own_workspace_id() -> str:
+    return (
+        await Context()
+        .root_select("currentWorkspace", [])
+        .select("Workspace", "id", [])
+        .execute(str)
+    )
+
+
 def _read_dir(dctx: Context, secret: str) -> dict[str, Context]:
     """Reach the secret from a Directory: a plain read in case a reload already
     pulled it in at the root, and a climb at each depth, by file path and by
@@ -91,7 +100,7 @@ def _source_dirs(source: Context, secret: str) -> dict[str, Context]:
       - asString/pin/digest/version/commit/cloneRef/cloneURL/htmlURL/
         repoRootPath/sourceSubpath/originalSubpath: scalars, no directory.
       - localContextDirectoryPath: a host path string, and only for a local
-        source; the handed source is DIR. No contents.
+        source. No contents.
       - introspectionSchemaJSON/clientSchemaIntrospectionJSON: schema JSON of
         the module, not a directory of files.
       - generate(workspace:): needs a Workspace argument, which is the very
@@ -240,7 +249,7 @@ async def _probe(ctx: Context) -> tuple[str, str]:
 
 
 async def reach(secret: str) -> str:
-    held = _held_ids()
+    held = [*_held_ids(), await _own_workspace_id()]
     # The held IDs, plus one level of sub-sources reached from each.
     sources = list(held)
     for i in held:

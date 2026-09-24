@@ -1053,40 +1053,14 @@ type E2e {
     assertNotContains(quoted, sharedEntrypointSource, "a single-quoted Dang entrypoint was replaced: " + quoted)
     assertContainsNone(quoted, noRuntime)
 
-    # Never a manifest that cannot run the module: a local client loads only
-    # through what the SDK's entrypoint hands over, so an entrypoint it does
-    # not write, which may not, is refused in a scope with one.
+    # A local client loads through serveModule under any entrypoint, so an
+    # entrypoint of the user's own is kept in a scope with one too.
     let local = [ws.moduleSource("/" + clientDepPath)]
-    let ownWithClient = manifestWithClients(ws.withNewFile(manifestPath, ownPath), local) rescue {
-      err: Error => err.message
-    }
-    assertContainsAll(ownWithClient, [
-      "./my-entrypoint", "does not write", "local clients (client-dep)",
-      "update the entrypoint to hand them over", "entrypoint/handover.dang", "ClientHandover(workspace: workspace).clients",
-      "remove the [entrypoint] table", "remove the local clients",
-    ])
-    # A fork that does what the refusal asks is accepted, and kept as written.
-    let forkPath = "/" + tomlGenerateModulePath + "/my-entrypoint"
-    let handingFork = manifestWithClients(
-      ws.withNewFile(manifestPath, ownPath).withDirectory(forkPath, ws.directory("/entrypoint")),
-      local,
-    )
-    assertContains(handingFork, "source = \"./my-entrypoint\"", "a fork that hands clients over was refused or replaced: " + handingFork)
-    # Carrying the file is not enough: the fork must call it.
-    let idleFork = manifestWithClients(
-      ws.withNewFile(manifestPath, ownPath)
-        .withNewFile(forkPath + "/handover.dang", ws.file("/entrypoint/handover.dang").contents)
-        .withNewFile(forkPath + "/main.dang", "type Entrypoint {\n}\n"),
-      local,
-    ) rescue {
-      err: Error => err.message
-    }
-    assertContains(idleFork, "update the entrypoint to hand them over", "a fork that never calls the handover was accepted: " + idleFork)
+    let ownWithClient = manifestWithClients(ws.withNewFile(manifestPath, ownPath), local)
+    assertContains(ownWithClient, "source = \"./my-entrypoint\"", "an entrypoint of the user's own was refused or replaced with a local client: " + ownWithClient)
     let pinnedShared = "dagger.io/sdk/python/entrypoint@v1.0.0"
-    let pinnedWithClient = manifestWithClients(ws.withNewFile(manifestPath, head + "\n[entrypoint]\nkind = \"dang\"\nsource = \"" + pinnedShared + "\"\n"), local) rescue {
-      err: Error => err.message
-    }
-    assertContainsAll(pinnedWithClient, [pinnedShared, "does not write", "local clients (client-dep)"])
+    let pinnedWithClient = manifestWithClients(ws.withNewFile(manifestPath, head + "\n[entrypoint]\nkind = \"dang\"\nsource = \"" + pinnedShared + "\"\n"), local)
+    assertContains(pinnedWithClient, "source = \"" + pinnedShared + "\"", "a pinned shared entrypoint was refused or replaced with a local client: " + pinnedWithClient)
     let sharedWithClient = manifestWithClients(ws.withNewFile(manifestPath, plain), local)
     assertContains(sharedWithClient, "source = \"" + sharedEntrypointSource + "\"", "the SDK's own entrypoint was refused with a local client: " + sharedWithClient)
 
@@ -1144,15 +1118,15 @@ type E2e {
   it from `dagger module init` to `dagger call`.
 
   Under an entrypoint a module's code is not the module to the engine, and
-  its own workspace is its container's: the client's target resolves only
-  through what the entrypoint hands over, and the target's entrypoint,
-  called from that process, finds its module only in its own source.
+  its own workspace is its container's: the engine serves the client's
+  target from the tree the calling module was loaded from, and the target's
+  entrypoint, called from that process, finds its module only in its own
+  source.
 
-  What it hands over is the declared client and never the caller's
-  workspace: the module's code tries every ID it holds against a file that
-  is only in the caller's workspace, and reads nothing. A function that
-  declares a Workspace parameter still gets the caller's, because the caller
-  passes it.
+  The module's code gets nothing of the caller's workspace: it tries every
+  ID it holds against a file that is only in the caller's workspace, and
+  reads nothing. A function that declares a Workspace parameter still gets
+  the caller's, because the caller passes it.
   """
   pub entrypointClientCallCheck(ws: Workspace!): Void @check {
     entrypointClientCall(ws, "shared", "Shared")
@@ -1204,7 +1178,7 @@ type E2e {
     # entrypoint generated with the client describes it.
     let withClient = cli(targetReady, ["module", "init", "python", "--auto-apply", "--name", caller, "--path", callerPath] + static)
       .withNewFile(callerPath + "/src/ep_caller_" + form + "/__init__.py", callerSource)
-      .withFile(callerPath + "/src/ep_caller_" + form + "/reach.py", ws.file("/" + fixtureRoot + "/handover/reach.py"))
+      .withFile(callerPath + "/src/ep_caller_" + form + "/reach.py", ws.file("/" + fixtureRoot + "/reach/reach.py"))
       .withWorkdir(callerPath)
     let added = cli(withClient, ["module", "client", "add", "../" + target, "--sdk", "python", "--auto-apply"])
       .withWorkdir(playgroundRoot)
@@ -1223,7 +1197,7 @@ type E2e {
     assertNotContains(reached, secret, form + ": module code read a caller file: " + reached)
     # The probe proves something only if it held an ID to try, exercised many
     # routes, and hit no unknown field: an absent route errored for the wrong
-    # reason and is no evidence of safety (fixtures/handover/reach.py).
+    # reason and is no evidence of safety (fixtures/reach/reach.py).
     assertNotContains(reached, "held=0 ", form + ": the module held nothing to try, so this proves nothing: " + reached)
     assertContains(reached, "absent=0 ", form + ": a probe route hit an unknown field, so it proves nothing: " + reached)
     assertNotContains(reached, "routes=0 ", form + ": the probe ran no routes: " + reached)
@@ -1233,7 +1207,7 @@ type E2e {
   }
 
   """
-  A file at the root of the caller's workspace, which no module is handed.
+  A file at the root of the caller's workspace, outside every module's loaded files.
   """
   let callerSecretPath: String! = "review-secret.txt"
 
@@ -1496,16 +1470,10 @@ type E2e {
     assertContainsAll(main, [
       "implements ModuleEntrypoint",
       "let moduleName: String! = \"static-init\"",
-      "clients: ClientHandover(workspace: workspace).clients",
       "let module = currentModule.source",
     ])
-    # The declared clients go with the call, never the workspace, and the
-    # static entrypoint hands them over with the shared one's own code.
     assertNotContains(main, "workspace.id", "the static entrypoint hands the module the caller's workspace")
-    assert(
-      changes.layer.file(scope + "/sdk/entrypoint/handover.dang").contents == ws.file("/entrypoint/handover.dang").contents,
-      "the static entrypoint does not carry the shared entrypoint's handover",
-    )
+    assertNotContains(main, "clients:", "the static entrypoint still hands the module its clients")
     # Found through its own source, so a moved module needs no regeneration.
     assertNotContains(main, "modulePath", "the entrypoint still finds the module through the workspace")
     ["pyproject.toml", "src/static_init/__init__.py"].each { path =>
