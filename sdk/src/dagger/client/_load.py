@@ -30,12 +30,12 @@ from dagger.client._session import Session
 # a Dang entrypoint it is not: the module's code runs in an exec the
 # entrypoint starts, the engine gives that exec no module context, and the
 # process is a plain nested client whose current workspace is the one the
-# engine finds in its own container. The entrypoint resolves the clients the
-# caller declared on the module's scope and hands each over by name, as a
-# source over that client's own files (entrypoint/handover.dang). The
-# workspace never reaches this process: in Dagger an ID is a capability, and
-# this is third-party code. A git address depends on no workspace, so it
-# keeps serveModule either way.
+# engine finds in its own container. The entrypoint asks the engine for the
+# module's declared local clients and hands each over by name, as a source
+# over that client's own files (entrypoint/handover.dang). No workspace
+# reaches this process: in Dagger an ID is a capability, and this is
+# third-party code. A git address depends on no workspace, so it keeps
+# serveModule either way.
 
 
 class _Handover:
@@ -56,10 +56,12 @@ class _Handover:
             raise ClientLoadError(msg, target=target)
         if (source := self.clients.get(target.name)) is None:
             msg = (
-                f"The local client {target.name!r} is not declared on this "
-                f"module's scope in the caller's workspace, so the module's "
-                f"entrypoint did not hand it over. Declare it with `dagger "
-                f"module client add`. {GENERATE_HINT}"
+                f"The local client {target.name!r} is not declared for this "
+                f"module, so the engine did not hand it over. A module in the "
+                f"caller's workspace declares it on its scope in that "
+                f"workspace's dagger.toml, and a module from git or a "
+                f"directory in its own dagger.toml; `dagger module client add` "
+                f"writes it. {GENERATE_HINT}"
             )
             raise ClientLoadError(msg, target=target)
         return source

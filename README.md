@@ -96,9 +96,12 @@ description in the engine's own session.
 The module's code runs in an exec the entrypoint starts, which the engine does
 not make the module: its own current workspace is the one found in its
 container, so a client to a local module cannot resolve its path there. The
-entrypoint resolves the clients the caller's `dagger.toml` declares on the
-module's scope, and each call carries them by name, each as a module source
-over only the files the engine loaded for that client. A client to a local
+entrypoint asks the engine for the module's declared local clients
+(`currentModule.localClients`): for a module in the caller's workspace, the
+ones the caller's `dagger.toml` declares on its scope; for a module from git
+or a directory, the ones its own `dagger.toml` declares. Each call carries
+them by name, each as a module source over only the files the engine loaded
+for that client. A client to a local
 module loads through its entry (`node(id:)` → `asModule` → `serve`); a git
 client goes through `serveModule`, as in a plain program.
 
