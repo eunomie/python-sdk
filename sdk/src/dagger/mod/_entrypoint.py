@@ -239,16 +239,11 @@ type Entrypoint implements ModuleEntrypoint {{
     fnName: String!,
     fnArgs: JSON!,
   ): JSON! {{
-    # The module's declared local clients go with the call, never the
-    # workspace (see handover.dang).
     let request = JSON.encode({{{{
       receiverType: receiverType,
       receiverValue: receiverValue,
       fnName: fnName,
       fnArgs: fnArgs,
-      clients: ClientHandover(workspace: workspace).clients.map {{ client =>
-        {{{{name: client.name, source: client.source}}}}
-      }},
     }}}})
     let result = runtime
       .withExec(["python", "-m", "dagger.mod", "call", "--output", "/dagger/result.json"], stdin: request, experimentalPrivilegedNesting: true)

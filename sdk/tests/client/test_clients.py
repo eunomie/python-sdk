@@ -1,7 +1,6 @@
 """The SDK side of a generated client: its session, its target, its load."""
 
 import gc
-import json
 import logging
 import threading
 import time
@@ -29,11 +28,6 @@ from dagger.client import (
     registering_types,
 )
 from dagger.client._core import Arg, Context
-from dagger.client._load import (
-    leave_entrypoint,
-    parse_handed_clients,
-    use_entrypoint_clients,
-)
 from dagger.client._session import BaseConnection, as_session
 from dagger.client.base import Type
 
@@ -194,119 +188,6 @@ async def test_engine_without_serve_module_fails_the_load_not_as_stale():
     assert not isinstance(info.value, StaleClientError)
     assert info.value.__cause__ is NO_SERVE_MODULE
     assert len(s.session.loads) == 1
-
-
-HANDED = "bW9kdWxlU291cmNl"
-
-
-@pytest.fixture
-def handed_clients():
-    use_entrypoint_clients({"linter": HANDED})
-    yield HANDED
-    leave_entrypoint()
-
-
-async def test_handed_client_serves_a_local_target_by_name(handed_clients):
-    # Under a module entrypoint this process is not the module, and its own
-    # current workspace is its container: the entrypoint hands over each
-    # declared client as a source, by name, and serveModule is never asked.
-    s = session()
-
-    await client_root(Glow, LINTER, "linter", [], session=s).output()
-
-    load, query = s.session.queries
-    assert load == (
-        "query {\n"
-        f'  node(id: "{handed_clients}") {{\n'
-        "    ... on ModuleSource {\n"
-        "      asModule {\n"
-        "        serve\n"
-        "      }\n"
-        "    }\n"
-        "  }\n"
-        "}"
-    )
-    assert query == "query {\n  linter {\n    output\n  }\n}"
-
-
-async def test_handed_clients_leave_a_git_target_to_serve_module(handed_clients):
-    s = session()
-
-    await glow(session=s).output()
-
-    (load,) = s.session.loads
-    assert "serveModule" in load
-    assert handed_clients not in load
-
-
-@pytest.mark.usefixtures("handed_clients")
-async def test_undeclared_local_client_fails_naming_it():
-    # A local target the caller did not declare on the scope was not handed
-    # over. It never falls back to serveModule, which would resolve the path
-    # in this process's container.
-    s = session()
-    other = Target(name="other", ref="/.dagger/modules/other")
-
-    with pytest.raises(ClientLoadError) as info:
-        await client_root(Glow, other, "other", [], session=s).output()
-
-    assert "'other' is not declared" in str(info.value)
-    assert "dagger generate" in str(info.value)
-    assert not s.session.queries
-
-
-async def test_entrypoint_without_a_handover_fails_a_local_target():
-    # An entrypoint that sends no clients, one from before the handover or
-    # not this SDK's, is still an entrypoint: the path cannot resolve here.
-    use_entrypoint_clients(None)
-    try:
-        s = session()
-        with pytest.raises(ClientLoadError) as info:
-            await client_root(Glow, LINTER, "linter", [], session=s).output()
-        await glow(session=s).output()
-    finally:
-        leave_entrypoint()
-
-    assert "handed over no clients" in str(info.value)
-    assert "dagger generate" in str(info.value)
-    (load,) = s.session.loads
-    assert "serveModule" in load
-    assert GLOW.ref in load
-
-
-@pytest.mark.usefixtures("handed_clients")
-async def test_handed_client_failure_does_not_fall_back():
-    s = session()
-    s.session.fail["asModule"] = QueryError([QueryErrorValue("boom")], "query")
-
-    with pytest.raises(ClientLoadError):
-        await client_root(Glow, LINTER, "linter", [], session=s).output()
-
-    (load,) = s.session.loads
-    assert "serveModule" not in load
-
-
-async def test_outside_an_entrypoint_a_local_target_uses_serve_module():
-    s = session()
-
-    await client_root(Glow, LINTER, "linter", [], session=s).output()
-
-    (load,) = s.session.loads
-    assert "serveModule" in load
-    assert "node(" not in load
-
-
-def test_handed_clients_parse_from_the_request():
-    handed = [{"name": "linter", "source": HANDED}]
-
-    assert parse_handed_clients(handed) == {"linter": HANDED}
-    assert parse_handed_clients(json.dumps(handed)) == {"linter": HANDED}
-    assert parse_handed_clients([]) == {}
-    assert parse_handed_clients(None) is None
-    with pytest.raises(TypeError):
-        parse_handed_clients({"linter": HANDED})
-    with pytest.raises(TypeError):
-        parse_handed_clients([{"name": "linter", "source": 1}])
 
 
 async def test_failed_load_names_the_target_and_the_cause():

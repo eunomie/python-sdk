@@ -76,15 +76,7 @@ A Dang entrypoint already in the manifest is kept as written, so a module can
 pin a version of the shared entrypoint, point at a fork, or name one of its
 own. Generation replaces only the static entrypoint it writes itself, told by
 its source, `./sdk/entrypoint`. The manifest is read with a TOML parser, so
-quoting and key order are the user's. One exception is refused rather than kept: an
-entrypoint this SDK does not write, in a scope with a local client, that does
-not hand clients over. A local client loads only through what an entrypoint
-hands the module (below), so generation stops and says so instead of writing
-a module that fails at its first call. A fork hands them over by carrying
-`handover.dang` unchanged and sending
-`clients: ClientHandover(workspace: workspace).clients…` with each call, as
-`main.dang` does; generation reads the entrypoint where the engine does and
-accepts it then.
+quoting and key order are the user's.
 
 Inside an entrypoint `currentModule` is the module it serves, so the
 entrypoint builds that module's container from `currentModule.source`, with
@@ -93,25 +85,16 @@ module to describe itself (`python -m dagger.mod describe`) or to run one call
 (`python -m dagger.mod call`). The types it returns are rebuilt from that
 description in the engine's own session.
 
-The module's code runs in an exec the entrypoint starts, which the engine does
-not make the module: its own current workspace is the one found in its
-container, so a client to a local module cannot resolve its path there. The
-entrypoint resolves the clients the caller's `dagger.toml` declares on the
-module's scope, and each call carries them by name, each as a module source
-over only the files the engine loaded for that client. A client to a local
-module loads through its entry (`node(id:)` → `asModule` → `serve`); a git
-client goes through `serveModule`, as in a plain program.
-
-The caller's workspace never reaches the module's code: an ID is a
-capability, and a module is third-party code. Not the workspace, and not the
-source `Workspace.moduleSource` returns either, because that one reloads its
-context from the workspace when asked for more files. A function that
-declares a `Workspace` parameter still gets one, because its caller passes it.
+The module's code runs in an exec the entrypoint starts, and loads a client
+with `serveModule`, as a plain program does. The engine resolves a local
+client's path in the tree the module was loaded from: its git repository at
+the pinned commit, the directory it was built from, or on the host its git
+repository, or its own directory outside one. An engine without that resolves the path in the caller's
+workspace instead, and can serve the wrong module.
 
 | File | What it is |
 | --- | --- |
 | `main.dang` | the `ModuleEntrypoint`: `types` and `call` |
-| `handover.dang` | the declared clients each call carries; a static entrypoint carries a copy |
 | `build.dang` | the container build, generated from `runtime/build.dang` |
 
 `build.dang` is generated, not hand-edited: the engine copies only the `.dang`
