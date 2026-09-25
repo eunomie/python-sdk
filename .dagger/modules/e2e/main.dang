@@ -1112,6 +1112,33 @@ type E2e {
   }
 
   """
+  A module named with a digit or a capital runs: `dagger module init` puts its
+  package where uv_build and the runtime look for it, in the shared and the
+  static form, and the module still runs after `dagger generate`.
+  """
+  pub cliModuleNameCheck(ws: Workspace!): Void @check {
+    cliModuleName(ws, "module3", "module3", false)
+    cliModuleName(ws, "module3", "module3", true)
+    cliModuleName(ws, "MyModule", "mymodule", true)
+    null
+  }
+
+  let cliModuleName(ws: Workspace!, name: String!, pkg: String!, static: Boolean!): Void {
+    let form = if (static) { "static" } else { "shared" }
+    let path = ".dagger/modules/" + form + "-" + name
+    let flags = if (static) { ["--dang-entrypoint"] } else { [] :: [String!]! }
+    let generated = cli(
+      cli(playground(ws), ["module", "init", "python", "--auto-apply", "--name", name, "--path", path] + flags),
+      ["generate", "-y"],
+    )
+    let runnable = if (static) { generated } else { onCheckoutEntrypoint(generated, ws, path, name) }
+    let ran = cli(runnable, ["-m", path, "call", "container", "file", "--path", "/etc/alpine-release", "contents"])
+    assert(ran.stdout.trimSpace != "", "the " + form + " module " + name + " did not run")
+    ran.withExec(["test", "-f", path + "/src/" + pkg + "/__init__.py"]).sync
+    null
+  }
+
+  """
   A module on an entrypoint calls a local client whose module is on an
   entrypoint too, in both forms: this checkout's shared entrypoint, and the
   one `--dang-entrypoint` generates into the module. The released CLI drives
