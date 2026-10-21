@@ -229,9 +229,7 @@ and `cp runtime/workspace_reader.py entrypoint/`.
 
 The address above only resolves once `entrypoint/` is on this repository's
 default branch and a `v1` release is tagged: `@v1` selects the greatest
-`entrypoint/v1.*` tag, then the greatest plain `v1.*` tag. The Python process the entrypoint starts belongs to no module
-on the engine's side: the core API works in it, and `dag.current_module()`
-fails with "no current module". The static entrypoint has the same limit.
+`entrypoint/v1.*` tag, then the greatest plain `v1.*` tag.
 
 ## Static entrypoint
 
