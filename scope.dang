@@ -803,14 +803,6 @@ type PyprojectHelper {
       }
     }
   }
-
-  """
-  The file with one table cut out and every other byte kept.
-  """
-  pub withoutTable(file: File!, table: String!): File! {
-    let at = "/work/" + file.name
-    tool.withFile(at, file).withExec(["pyproject", "remove-table", at, table]).file(at)
-  }
 }
 
 """A pyproject.toml read as TOML; a mistyped value reads as unset."""
