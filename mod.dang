@@ -240,11 +240,13 @@ type Mod {
     if (hasEntrypointManifest) {
       let staged = ManifestToml(ws.file("/" + manifestPath).contents).withoutEntrypoint
       let loaded = sdkHelpers.moduleManifest(loadToml: staged)
-      # A static entrypoint manifest holds no runtime to fall back on.
+      # A static entrypoint manifest holds no runtime, and the engine refuses a
+      # manifest with neither. Dang, not Python: the engine loads the added
+      # runtime eagerly, and only Dang's loads with no build.
       let runnable = if (manifestConfig.fields.contains("runtime")) {
         loaded
       } else {
-        loaded.withLegacyPythonRuntime
+        loaded.withLegacyDangRuntime
       }
       # The build that renders the types reads the path sources outside the
       # module directory, which the entrypoint's sources will return.
